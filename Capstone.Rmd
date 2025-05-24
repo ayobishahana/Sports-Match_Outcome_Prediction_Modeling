@@ -1,0 +1,620 @@
+---
+title: "Sports Match outcome Prediction Modeling"
+author: "Shahana Ayobi"
+date: '2023-05-02'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r loading packages, results='hide'}
+#Loading the required packages
+library(pacman)
+pacman::p_load(tidyverse, rvest, data.table, stringr, stringdist, lubridate,
+               kableExtra, knitr, corrplot, glmnet, nnet, broom, stargazer, dplyr, modelsummary, caret, ranger, pander)
+```
+
+# 1.	 Introduction
+As more football fans are getting interested in football betting, it is important for the betting providers to stay ahead in this highly competitive market, and predict the match outcomes more accurately. The global sports betting market is expected to reach $155 billion by 2024 according a report by Forbes, by developing a more precise prediction model that would take into account the potential financial risks associated with skewed odds, betting companies will be able to attract more customers, ensure balanced odds, and increase their profits. In the UK alone, the online betting sector generated £446 million according to the UK Gambling Commission, and football plays an important role in driving this revenue. By predicting a more accurate model, it will give the bookkeepers a competitive advantage in the betting industry and they will be able to provide more balanced odds by giving more weight to the skewed odds, and provide the customers with reliable information about the match outcomes.
+Therefore, the problem I am trying to solve is to build a model that accurately predicts the match outcomes for the 20 English Premier League teams across three seasons. More importantly, the aim of this project is to find predictors that influence a match outcome the most. 
+Every football match typically results in one of the three outcomes: a home team win, a draw, o an away team win. Therefore, the feature selection for this analysis is organized such that, the factors affecting each of these outcomes are considered. Thus, both home and away predictors are included to examine their impact on match results.
+This analysis delves deeper into identifying the predictors that can significantly influence match outcomes. By understanding these factors, they can be utilized to predict future match results with better accuracy and provide better insights for the bookmakers to make strategic decisions. 
+
+# 2.	 Data Cleaning and Processing 
+The data is extracted from three widely used data sources for football match outcome analysis and considering three Premier league seasons; 2019/2020, 2020/2021, and 2021/2022. Each team plays 38 matches, hence each season contains 380 matches, where in total would be 1140 matches for the three seasons. The first source is from Football.co.uk and includes variables such as location of the team, betting odds by different betting providers, and match scores. It contains a total of 106 variables, and 380 rows. This table is cross section match information for each specific season, and the rows represent a single match played between two teams, home and away.
+
+The second dataset comes from FRref and includes information on form of the team and expected goals. It contains a total of 14 variables. Looking closely at the data, there are many empty rows introduced as the match week separators, thus, they have been removed to make all three of the datasets equal.
+
+```{r loading the files, results='hide'}
+# loading the files
+stats_2019 <- read_csv("E0_2019:2020.csv")
+xg_2019 <- read_csv("XG_2019 2020.csv")
+stats_2020 <- read_csv("E0_2020:2021.csv")
+xg_2020 <- read_csv("XG_2020 2021.csv")
+stats_2021 <- read_csv("E0_2021:2022.csv")
+xg_2021 <- read_csv("XG_2021:2022.csv")
+
+```
+
+```{r results='hide'}
+# Define a function to change the date format
+change_date_format <- function(data) {
+  data$Date <- format(as.Date(data$Date, "%m/%d/%y"), "%d/%m/%Y")  # Change the format to "dd/mm/yyyy"
+  return(data)
+}
+
+# Apply the function to each xg dataset
+xg_2019 <- change_date_format(xg_2019)
+xg_2020 <- change_date_format(xg_2020)
+xg_2021 <- change_date_format(xg_2021)
+
+
+
+# Transforming the time category
+time_category <- function(data) {
+  data$Time <- as.POSIXlt(data$Time, format = "%H:%M:%S")
+  
+  # Create a new variable for time category
+  data$Time_Category <- ifelse(data$Time$hour >= 12 & data$Time$hour < 17, "Afternoon", "Evening")
+  
+  data$Time <- format(data$Time, format = "%H:%M:%S")
+  
+  return(data)
+}
+
+# Applying the function to each dataframe
+stats_2019 <- time_category(stats_2019)
+stats_2020 <- time_category(stats_2020)
+stats_2021 <- time_category(stats_2021)
+```
+
+To extract the market values for each season in the English Premier League, the `rvest` package in R was employed by first reading the HTML content of the Transfermarkt, and then extracting the specific table containing market values for each team which in this case is table number two on the webpage. Empty rows and irrelevant columns were then removed, and columns were renamed properly to improve code readability and avoid any chances  of errors during analysis. The scraped tables for the three seasons were then saved into a csv format to have the data accessible for further analysis and avoid the time consuming process of scraping the data again. The dataset eventually contains a total of 6 variables and 20 rows for each season, each row representing the team played in that specific season. 
+
+```{r eval=FALSE}
+# Scrapping the market values for each season
+ url_2019 <- "https://www.transfermarkt.com/premier-league/startseite/wettbewerb/GB1/plus/?saison_id=2019"
+  # Read HTML table from URL
+  webpage <- read_html(url_2019)
+  table <- html_table(webpage, fill = TRUE)[[2]]
+  
+  # Filter out empty rows and column headers
+  table <- table[-c(1, 1), -c(1, 8)]
+  
+  # Rename columns
+  colnames(table) <- c("Team", "Squad", "AvgAge", "Foreigners", "AvgMV", "TotalMV")
+  write_csv(table, "market_value_2019.csv")
+  
+  
+# market values for 2020/2021 season
+  
+  url_2020 <- "https://www.transfermarkt.com/premier-league/startseite/wettbewerb/GB1/plus/?saison_id=2020"
+  # Read HTML table from URL
+  webpage <- read_html(url_2020)
+  table <- html_table(webpage, fill = TRUE)[[2]]
+  
+  # Filter out empty rows and column headers
+  table <- table[-c(1, 1), -c(1, 8)]
+  
+  # Rename columns
+  colnames(table) <- c("Team", "Squad", "AvgAge", "Foreigners", "AvgMV", "TotalMV")
+  write_csv(table, "market_value_2020.csv")
+   
+
+  
+# market values for 2021/2022 season
+  
+   url_2021 <- "https://www.transfermarkt.com/premier-league/startseite/wettbewerb/GB1/plus/?saison_id=2021"
+  # Read HTML table from URL
+  webpage <- read_html(url_2021)
+  table <- html_table(webpage, fill = TRUE)[[2]]
+  
+  # Filter out empty rows and column headers
+  table <- table[-c(1, 1), -c(1, 8)]
+  
+  # Rename columns
+  colnames(table) <- c("Team", "Squad", "AvgAge", "Foreigners", "AvgMV", "TotalMV")
+  write_csv(table, "market_value_2021.csv")
+  
+
+```
+
+To ensure data consistency, the columns representing average market value (AvgMV) and total market value (TotalMV) were cleaned by removing the Euro symbol and abbreviations for billion (bn) and million (m). In addition, rows representing market values in billions were converted to millions to ensure uniformity in units of measurement for further analysis and comparison.
+
+```{r results='hide'}
+# Cleaning the market value tables for each season
+cleaned_market_values <- function(data) {
+  data <- data %>% mutate(AvgMV=gsub("€|bn|m", "", AvgMV), TotalMV=gsub("€|bn|m", "", TotalMV), TotalMV=as.numeric(TotalMV), AvgMV=as.numeric(AvgMV))
+  return(data)
+}
+
+# Function to multiply specific cells by 1000
+multiply_rows_by_1000 <- function(data, row_indices, column_name) {
+  data[row_indices, column_name] <- data[row_indices, column_name] * 1000
+  return(data)
+}
+
+# market values for 2020/2021
+market_values_2019 <- read_csv("market_value_2019.csv")
+# Apply the function to market_values_2019
+market_values_2019 <- cleaned_market_values(market_values_2019)
+market_values_2019 <- multiply_rows_by_1000(market_values_2019, 1:2, "TotalMV")
+
+# market values for 2020/2021
+market_values_2020 <- read_csv("market_value_2020.csv")
+# Apply the functions to market_values_2020
+market_values_2020 <- cleaned_market_values(market_values_2020)
+market_values_2020 <- multiply_rows_by_1000(market_values_2020, 1, "TotalMV")
+
+
+# market values for 2021/2022
+market_values_2021 <- read_csv("market_value_2021.csv")
+# Apply the functions to market_values_2021
+market_values_2021 <- cleaned_market_values(market_values_2021)
+market_values_2021 <- multiply_rows_by_1000(market_values_2021, 1, "TotalMV")
+```
+
+## 2.1. Merging the Data
+Since the datasets come from three different sources, there are discrepancies among the datasets such as variations in team names, abbreviations, and team changes and relegations during seasons that need to be resolved before merging them. To standardize the names across datasets, a fuzzy matching approach was employed by using Jaro-Winkler method to first calculate the string distances to enable the identification of the closest match. Then each team name was replaced with the predefined standardized names to establish a unified framework. By standardizing the team names, data consistency and accuracy is insured and the datasets are easily merged. To make sure the order of the matches are preserved, a new column was created which concatenates the names of the home and away team, serving as a unique identifier for the matches. The datasets are then merged using this column for each year individually, and then the merged datasets are combined together using the `rbind` function to create the final dataset called `merged_data`, which eventually contains 1140 matches.
+
+
+```{r results='hide'}
+
+# 2019/2020
+xg_2019 <- xg_2019[, -c(1,2,4, 11:14)]
+xg_2019 <- xg_2019[rowSums(is.na(xg_2019)) != ncol(xg_2019), ]
+# Create a vector of standard team names
+standard_names <- c("Brentford", "Manchester United", "Leicester City", "Burnley", "Chelsea", "Watford", "Everton", "Norwich City", "Newcastle", "Tottenham", "Liverpool", "Aston Villa", "Manchester City", "Leeds", "Crystal Palace", "Brighton", "Wolves", "Southampton", "Arsenal", "West Ham", "Sheffield United", "West Bromwich", "Bournemouth", "Fulham")
+
+# Function to fuzzy match a single name with the standard names
+fuzzy_match <- function(name, standard_names) {
+  distances <- stringdistmatrix(name, standard_names, useNames = FALSE, method = "jw")
+  closest_index <- which.min(distances)
+  closest_name <- standard_names[closest_index]
+  return(closest_name)
+}
+
+# Standardize team names in each data frame
+stats_2019$HomeTeam <- sapply(stats_2019$HomeTeam, fuzzy_match, standard_names = standard_names)
+xg_2019$Home <- sapply(xg_2019$Home, fuzzy_match, standard_names = standard_names)
+stats_2019$AwayTeam <- sapply(stats_2019$AwayTeam, fuzzy_match, standard_names = standard_names)
+xg_2019$Away <- sapply(xg_2019$Away, fuzzy_match, standard_names = standard_names)
+market_values_2019$Team <- sapply(market_values_2019$Team, fuzzy_match, standard_names = standard_names)
+
+
+#2020/2021
+xg_2020 <- xg_2020[, -c(1,2,4, 11:14)]
+xg_2020 <- xg_2020[rowSums(is.na(xg_2020)) !=ncol(xg_2020), ]
+# Standardize team names in each data frame
+stats_2020$HomeTeam <- sapply(stats_2020$HomeTeam, fuzzy_match, standard_names = standard_names)
+xg_2020$Home <- sapply(xg_2020$Home, fuzzy_match, standard_names = standard_names)
+stats_2020$AwayTeam <- sapply(stats_2020$AwayTeam, fuzzy_match, standard_names = standard_names)
+xg_2020$Away <- sapply(xg_2020$Away, fuzzy_match, standard_names = standard_names)
+market_values_2020$Team <- sapply(market_values_2020$Team, fuzzy_match, standard_names = standard_names)
+
+
+
+#2021/2022
+xg_2021 <- xg_2021[, -c(1,2,4, 11:14)]
+xg_2021 <- xg_2021[rowSums(is.na(xg_2021)) !=ncol(xg_2021), ]
+# Standardize team names in each data frame
+stats_2021$HomeTeam <- sapply(stats_2021$HomeTeam, fuzzy_match, standard_names = standard_names)
+xg_2021$Home <- sapply(xg_2021$Home, fuzzy_match, standard_names = standard_names)
+stats_2021$AwayTeam <- sapply(stats_2021$AwayTeam, fuzzy_match, standard_names = standard_names)
+xg_2021$Away <- sapply(xg_2021$Away, fuzzy_match, standard_names = standard_names)
+market_values_2021$Team <- sapply(market_values_2021$Team, fuzzy_match, standard_names = standard_names)
+
+```
+
+
+```{r results='hide'}
+calculate_conversion_rate <- function(data) {
+  # Calculate conversion rate for home team (HCR) and replace NaN and Inf with 0
+  data$HCR <- data$FTHG / data$HST
+  data$HCR[is.nan(data$HCR) | is.infinite(data$HCR)] <- 0
+  
+  # Calculate conversion rate for away team (ACR) and replace NaN and Inf with 0
+  data$ACR <- data$FTAG / data$AST
+  data$ACR[is.nan(data$ACR) | is.infinite(data$ACR)] <- 0
+  
+  # Return the updated dataframe
+  return(data)
+}
+
+# Calculate conversion rates for each dataframe
+stats_2019 <- calculate_conversion_rate(stats_2019)
+stats_2020 <- calculate_conversion_rate(stats_2020)
+stats_2021 <- calculate_conversion_rate(stats_2021)
+
+```
+
+
+```{r results='hide'}
+# calculating home attack strength which is the team’s average number of goals, divided by the league’s Average number of goals.
+calculate_attack_strength <- function(data) {
+  league_avg_goals <- mean(data$FTHG)
+  data <- data %>%
+    group_by(HomeTeam) %>%
+    mutate(AvgGoalsH = mean(FTHG),
+           HAS = AvgGoalsH / league_avg_goals)
+  
+  return(data)
+  }
+
+# applying the function to the dataset
+stats_2019 <- calculate_attack_strength(stats_2019)
+stats_2020 <- calculate_attack_strength(stats_2020)
+stats_2021 <- calculate_attack_strength(stats_2021)
+
+calculate_attack_strength_away <- function(data) {
+  league_avg_goals <- mean(data$FTAG)
+  data <- data %>%
+    group_by(AwayTeam) %>%
+    mutate(AvgGoalsA = mean(FTAG),
+           AAS = AvgGoalsA / league_avg_goals)
+  
+  return(data)
+}
+stats_2019 <- calculate_attack_strength_away(stats_2019)
+stats_2020 <- calculate_attack_strength_away(stats_2020)
+stats_2021 <- calculate_attack_strength_away(stats_2021)
+
+```
+
+
+```{r results='hide'}
+# Define columns to be removed
+cols_to_remove <- c(1, 3, 12:24, 49:106)
+
+# Loop through the three tables and remove the columns
+for (i in 1:3) {
+  assign(paste0("stats_", 2019+i-1), get(paste0("stats_", 2019+i-1))[, -cols_to_remove])
+}
+
+```
+
+
+```{r results='hide'}
+
+# create new column in football_stats
+stats_2019$teams <- paste(stats_2019$HomeTeam, stats_2019$AwayTeam, sep = " vs. ")
+# create new column in xg_scores
+xg_2019$teams <- paste(xg_2019$Home, xg_2019$Away, sep = " vs. ")
+ 
+# merge based on teams column
+merged_data_2019 <- left_join(stats_2019, xg_2019, by = c("teams", "Date"))
+merged_data_2019 <- left_join(merged_data_2019, market_values_2019, by = c("HomeTeam" = "Team"))
+
+# Create new columns in stats_2020 and stats_2021
+stats_2020$teams <- paste(stats_2020$HomeTeam, stats_2020$AwayTeam, sep = " vs. ")
+stats_2021$teams <- paste(stats_2021$HomeTeam, stats_2021$AwayTeam, sep = " vs. ")
+
+# Create new columns in xg_2020 and xg_2021
+xg_2020$teams <- paste(xg_2020$Home, xg_2020$Away, sep = " vs. ")
+xg_2021$teams <- paste(xg_2021$Home, xg_2021$Away, sep = " vs. ")
+
+# Merge 2020 datasets
+merged_data_2020 <- left_join(stats_2020, xg_2020, by = c("teams", "Date"))
+merged_data_2020 <- left_join(merged_data_2020, market_values_2020, by = c("HomeTeam" = "Team"))
+
+# Merge 2021 datasets
+merged_data_2021 <- left_join(stats_2021, xg_2021, by = c("teams", "Date"))
+merged_data_2021 <- left_join(merged_data_2021, market_values_2021, by = c("HomeTeam" = "Team"))
+
+```
+
+```{r include=FALSE}
+# Join all three datasets together
+merged_data <- rbind(merged_data_2019, merged_data_2020, merged_data_2021)
+```
+
+
+# 3.	Feature Selection
+In football, the home team typically holds an edge and one of the factors considered is crowd support. The crowd turnout for home team is usually larger which sometimes can overwhelm the opponent side. This is why the features are divided on the basis of the home team and away team. 
+Taking into account the nature of football, the match can result in one of the three possible outcomes: a win, draw, or loss. Thus, the outcome variable is multiclass that takes the value of 1 for a home team win, 0.5 for a draw, and 0 for an away team win. Table 1 shows that there is an overall home team advantage with a probability of 42% considering all three seasons. However, for the season 2020/2021, an Away team advantage is seen with 40% win probability.
+
+
+```{r results='hide'}
+merged_data <- mutate(merged_data, match_outcome = ifelse(FTR == "H", 1, ifelse(FTR == "D", 0.5, 0)))
+
+```
+
+
+```{r results='hide'}
+# Create the season column
+merged_data$season <- ifelse(seq_len(nrow(merged_data)) <= 380, "2019/2020",
+                             ifelse(seq_len(nrow(merged_data)) <= 760, "2020/2021", "2021/2022"))
+
+
+# Remove unnecessary columns
+merged_data <- merged_data[, !(names(merged_data) %in% c("Home", "Away", "Squad", "Score", " HTHG", "HTAG", "HTR", "HTHG"))]
+# Rename variables
+setnames(merged_data, old = c("xG...43", "xG...45"), new = c("xGH", "xGA"))
+
+```
+
+
+```{r results='hide'}
+# Calculate probabilities for each season
+season_probs <- data.frame(
+  Season = c("2019/2020", "2020/2021", "2021/2022"),
+  Home_Win_Prob = sapply(c("2019/2020", "2020/2021", "2021/2022"), function(season) sum(merged_data$match_outcome == 1 & merged_data$season == season) / 380),
+  Draw_Prob = sapply(c("2019/2020", "2020/2021", "2021/2022"), function(season) sum(merged_data$match_outcome == 0.5 & merged_data$season == season) / 380),
+  Loss_Prob = sapply(c("2019/2020", "2020/2021", "2021/2022"), function(season) sum(merged_data$match_outcome != 1 & merged_data$match_outcome != 0.5 & merged_data$season == season) / 380)
+)
+
+season_probs <- add_row(season_probs,
+                        Season = "Overall", 
+                         Home_Win_Prob = sum(merged_data$match_outcome == 1)/nrow(merged_data), 
+                        Draw_Prob = sum(merged_data$match_outcome == 0.5)/nrow(merged_data),
+                        Loss_Prob = sum(merged_data$match_outcome == 0)/nrow(merged_data)
+                    )
+
+rownames(season_probs) <- NULL  # Remove row names
+season_probs <- season_probs %>%
+  mutate(across(c(Home_Win_Prob, Draw_Prob, Loss_Prob), ~round(., 4)))
+write.table(season_probs, file = "season_probs.csv", sep = ",")
+```
+
+
+```{r}
+season_probs %>%  kable(caption = "Match Outcome Probability Per Season") %>% 
+  kable_styling(latex_options = c("HOLD_position", "resizebox=2.5\\textwidth"), font_size = 14)
+
+```
+
+As for predictors, attack strength variable is created which is a team's average number of goals divided by the  league's average (The Punters Page, 2023). Incorporating the home and away team's attack strength provides an insight into the team's attacking  ability, and offers a relative measure of the team's offensive performance (Baio & Blangiardo, 2010). Furthermore, the expected goals (xG) is a statistical measure that estimates the likelihood of a shot resulting in a goal depending on parameters such as pass type, shot location, attack type, and others. It is an important predictor to include in the model since it assesses the quality of goal-scoring opportunities provided by a team based on the team's previous performance.
+Another key predictor is the conversion rate that measures a team’s efficiency in converting shots on target into goals. It provides insights into a team’s attacking prowess, and offensive strategy.  Calculating the rate mainly involves dividing the number of goals by the number of shots; however, focusing on shots on target provides a more specific measure as it only considers the shots that were aimed directly at the goal, excludes the attempts that were blocked or saved.  
+Other predictors include home and away teams' total market values, and odds provided by the betting providers. Although the number of attendees has been previously discussed to have a significant effect on the match outcome, adding it into the model would drop most of the observations for the 2020/2021 season since there are many empty rows in that season because of COVID-19 restrictions. Average value imputation is also not considered a suitable approach in this case since it would not accurately reflect the actual attendance patterns during those matches. For this analysis, those Null values have been imputed with zeros assuming that no spectators joined those matches. To account for data imputation for those missing values, a flag variable is created for the attendance variable. Including this variable into the model will avoid any potential biases associated with missing data by explicitly accounting for missing values.
+Figure 2 and Table 2 show the distribution and summary statistics of attendees before value imputation for all three seasons, the spectator patterns joining the matches look the same for the seasons 2019/2020 and 2021/2022, while 2020/2021 only match attendees of 10,000 or less in a total of 32 matches out of 380.
+
+```{r results='hide'}
+# Create density plot with separate lines for each season
+attendance <- ggplot(merged_data, aes(x = Attendance, color = season, fill= season)) +
+  geom_density(alpha = 0.3) +
+  labs(x = "Number of Attendees", y = "Density") +
+  scale_color_manual(values = c("blue", "maroon", "darkgreen"), labels = c("2019/2020", "2020/2021", "2021/2022")) + scale_fill_manual(values = c("blue", "maroon", "darkgreen")) + theme_classic()
+ggsave("attendance.png", attendance, width = 8, height = 6, dpi = 300)
+
+
+```
+
+```{r}
+attendance
+```
+
+```{r}
+summary <- datasummary(season*Attendance ~ Mean + SD + Min + Max + P25 + P75 + N, data = merged_data)
+summary
+```
+
+```{r results='hide'}
+# Create a flag variable for attendance and replace NaN with 0
+merged_data <- merged_data %>% 
+  mutate(Attendance_Flag = if_else(is.na(Attendance), 1, 0),
+         Attendance = if_else(is.na(Attendance), 0, Attendance))
+
+```
+
+
+Before going on to the modeling, it is also crucial to check variable correlations in order to avoid multicollinearity issues in the model. Checking at the correlation among the 8 online bookmakers, it is apparent that all of them are almost perfectly correlated with each other (see Figure 3 for correlation matrix). Their high correlation is expected because bookmakers aim to set similar odds to minimize their risk and ensure balanced betting. Therefore, only the odds by B365 are added into the model that would be representative of the rest of 7 bookmakers’ odds.
+
+```{r results='hide'}
+betting_vars <- c("B365H", "B365D", "B365A", "BWH", "BWD", "BWA", "IWH", "IWD", "IWA", "PSH", "PSD", "PSA", "WHH", "WHD", "WHA", "VCH", "VCD", "VCA", "MaxH", "MaxD", "MaxA", "AvgH", "AvgD", "AvgA")
+performance_vars <- c("xGH", "xGA", "HAS", "AAS")
+player_vars <- c("Foreigners", "AvgMV", "TotalMV")
+
+# Calculate the correlation matrices
+betting_cor <- cor(merged_data[, betting_vars])
+performance_cor <- cor(merged_data[, performance_vars])
+player_cor <- cor(merged_data[, player_vars])
+# Create the correlation plot
+png("betting_correlation.png", width = 800, height = 800)
+corrplot(betting_cor, type = "upper", method = "circle", tl.col = "black")
+dev.off()
+```
+
+```{r results='hide'}
+# Create a new data frame for home goals
+home_data <- data.frame(
+  Team = merged_data$HomeTeam,
+  Goals = merged_data$FTHG,
+  MatchType = "Home",
+  Season = merged_data$season
+)
+
+# Create a new data frame for away goals and reverse the values
+away_data <- data.frame(
+  Team = merged_data$AwayTeam,
+  Goals = merged_data$FTAG, 
+  MatchType = "Away",
+  Season = merged_data$season
+)
+
+# Combine the home and away data frames
+team_data <- rbind(home_data, away_data)
+
+# Calculate the average number of goals for each team in home and away matches
+team_avg_goals <- team_data %>%
+  group_by(Team, MatchType, Season) %>%
+  summarize(AvgGoals = mean(Goals))
+home_color <- "#702963"
+away_color <- "#8bceba"
+
+# Plot the bar chart with facet_wrap
+avg_goals <- ggplot(team_avg_goals, aes(x = AvgGoals, y = reorder(Team, AvgGoals), fill = MatchType)) +
+  geom_col(position = position_dodge()) +
+  scale_fill_manual(values = c(Home = home_color, Away = away_color),
+                    labels = c("Home", "Away"),
+                    name = "Match Type") +
+  ylab("Team") +
+  xlab("Average Number of Goals") +
+  facet_wrap(~ Season) +
+  theme_light()
+avg_goals
+ggsave("avg_goals.png", avg_goals, width = 8, height = 6, dpi = 300)
+
+ 
+```
+# 4.	Methodology
+The best model gives the most accurate prediction in the live data, therefore the data is split into two parts by 20% to 80% ratio. The train data contains the first 912 matches, and the test data includes the rest 228. Then, a Multinomial Logistic regression analysis is conducted to determine the significant variables influencing match outcomes. Additionally, algorithms such as random forest, and XGBoost will be employed to analyze the data and generate more precise models. While a home team advantage is often hypothesized in the Premier League, match outcomes are influenced by various factors and unforeseen circumstances. Hence, it is crucial to develop a model that accurately predicts outcomes while considering skewed odds and other influencing factors.
+
+## 4.1.	 Multinomial Logistic Regression
+Since each match has three probable outcomes, a win, a loss, or a draw, utilizing a Multinomial Logistic regression will make sure to predict these multiple outcome classes simultaneously. For multiclass classification problem like this, accuracy is a suitable metric to evaluate because it measures the proportion of correctly classified outcomes across all classes, offering an overall evaluation of the model’s predictive ability. The full model includes match outcome as response variable, and expected goals for home and away teams, average age of players, home and away team attack strength, B365 betting odds, conversion rates, match time, and attendance as predictors.
+	To measure the model’s explanatory power, McFadden’s pseudo R-squared is used instead of the traditional R-squared measure used in linear regression because it is not directly applicable in a Multinomial Logistic Regression. Pseudo R-squared provides an alternative way to quantify the model’s predictive performance by comparing the log-likelihood of the full model to a baseline model (null model) that includes the outcome variable as independent variable and intercept as predictor.
+	The pseudo R-squared is calculated such that the null model is fitted and its log-likelihood is obtained, and then the log-likelihood of the full model is acquired. McFadden’s log-likelihood is then calculated by subtracting the ratio of full model’s log-likelihood to null model’s from 1. This measures the improvement in model fit compared to the null model.
+	Looking at the results, the multinomial logistic regression achieved an accuracy of 77.19% for the train set and 73.68% for the test set. The pseudo R-squared values indicate that the model explains 48.22% of the variation in the match outcomes on the training set and 53.94% on the test set. Thus, the model performs well overall, but there is room for improvement.
+
+```{r results='hide'}
+vars_to_factor <- c("season", "match_outcome", "Time_Category", "Attendance_Flag")
+
+# Factorize the identified variables
+merged_data <- merged_data %>%
+  mutate(across(all_of(vars_to_factor), as.factor))
+```
+
+```{r results='hide'}
+my_seed <- 02052023
+set.seed(my_seed)
+# Calculate the number of observations for training and testing
+train_size <- round(0.8 * nrow(merged_data))
+test_size <- nrow(merged_data) - train_size
+
+# Split the data into training and testing sets
+train_data <- merged_data[1:train_size, ]
+test_data <- merged_data[(train_size + 1):nrow(merged_data), ]
+
+```
+
+```{r results='hide'}
+# Relevel the match_outcome variable
+train_data$match_outcome <- relevel(train_data$match_outcome, ref = "0.5")
+
+# Fit multinomial logistic regression
+logit_model <- multinom(match_outcome ~ xGH + xGA + AvgAge + TotalMV + HAS + AAS + B365H + B365D + B365A + HCR + ACR + Time_Category + Attendance + Attendance_Flag, data = train_data)
+logit_model_test <- multinom(match_outcome ~ xGH + xGA + AvgAge + Foreigners + TotalMV + HAS + AAS + B365H + B365D + B365A + HCR + ACR + Time_Category + Attendance + Attendance_Flag, data = test_data)
+train_predictions <- predict(logit_model, newdata = train_data)
+test_predictions <- predict(logit_model, newdata = test_data)
+
+# Calculate accuracy for training and test sets
+accuracy_train <- mean(train_predictions == train_data$match_outcome)
+accuracy_test <- mean(test_predictions == test_data$match_outcome)
+
+# Fit the null model
+null_model <- multinom(match_outcome ~ 1, data = train_data)
+null_model_test <- multinom(match_outcome ~ 1, data = test_data)
+
+# Calculate McFadden's pseudo R-squared for training set
+null_loglik <- logLik(null_model)  # log-likelihood of null model (intercept only)
+full_loglik <- logLik(logit_model)  # log-likelihood of full model
+pseudo_r2_train <- 1 - full_loglik / null_loglik
+
+# Calculate McFadden's pseudo R-squared for test set
+null_loglik_test <- logLik(null_model_test)  # log-likelihood of null model (intercept only)
+full_loglik_test <- logLik(logit_model_test)  # log-likelihood of full model
+pseudo_r2_test <- 1 - full_loglik_test / null_loglik_test
+
+# Store the results in a data frame
+result_multi <- data.frame(
+  model = "Logit Model",
+  accuracy_train = accuracy_train,
+  accuracy_test = accuracy_test,
+  pseudo_r2_train = pseudo_r2_train,
+  pseudo_r2_test = pseudo_r2_test
+)
+
+
+coefficients <- stargazer(logit_model, type = "text", out = "logit.pdf")
+# get relative risk ratios
+# Relative risk ratios allow an easier interpretation of the logit coefficients. They are the exponentiated value of the logit coefficients.
+logit_model.rrr = exp(coef(logit_model))
+stargazer(logit_model, type = "text", coef = list(logit_model.rrr), p.auto = FALSE, out = "logit_rrr.pdf")
+result_multi <- result_multi %>% mutate(across(c(accuracy_train, accuracy_test, pseudo_r2_train, pseudo_r2_test), ~round(., 4)))
+write.table(result_multi, file= "result_multi.csv", sep = "," )
+coefficients <- stargazer(logit_model, type = "text", out = "logit.txt")
+
+
+```
+
+```{r}
+result_multi %>% kable(caption = "Multinomial Logistic Regression Result") %>% 
+  kable_styling(latex_options = c("HOLD_position", "resizebox=2.5\\textwidth"), font_size = 14)
+```
+
+All the coefficients are  statistically significant at 1% significance level except for Total market values and audience attendance.
+
+```{r}
+stargazer(logit_model, type = "text", out = "logit.txt")
+```
+
+## 4.2.	 Random Forest
+Random Forest is a type of ensemble learning algorithm that combines multiple decision trees to make predictions. It is relevant to this project because the algorithm is efficient, scalable, and robust against overfitting. By randomly selecting the data and features, random forest creates a collection of trees that would collectively provide more accurate predictions. 
+	For this analysis, the random forest model was fitted to predict the match outcome using the same predictors as the previous logit model. The model was trained with 500 trees, minimum node size of 50, and maximum depth of 5. The model was then predicted on the test set to check its performance on the live data. 
+
+```{r random-forest, results='hide'}
+# fit the random forest model
+rf_model <- ranger(match_outcome ~ xGH + xGA + AvgAge + TotalMV + HAS + AAS + B365H + B365D + B365A + HCR + ACR + Time_Category + Attendance + Attendance_Flag,
+  data = train_data,
+  num.trees = 500,
+  min.node.size = 50,
+  max.depth = 5, importance = "impurity")
+
+# Make predictions on training and test sets
+train_predictions <- predict(rf_model, data = train_data)$predictions
+test_predictions <- predict(rf_model, data = test_data)$predictions
+
+# Calculate accuracy for training and test sets
+accuracy_train <- mean(train_predictions == train_data$match_outcome)
+accuracy_test <- mean(test_predictions == test_data$match_outcome)
+
+
+# Store the results in a data frame
+result_rf <- data.frame(
+  model = "Random Forest",
+  accuracy_train = accuracy_train,
+  accuracy_test = accuracy_test
+)
+
+result_rf <- result_rf %>% mutate(across(c(accuracy_train, accuracy_test), ~round(., 4)))
+write.table(result_rf, file = "rf_model.csv", sep = ",")
+
+```
+
+```{r}
+result_rf %>% kable(caption = "Random Forest Result") %>% 
+  kable_styling(latex_options = c("HOLD_position", "resizebox=2.5\\textwidth"), font_size = 14)
+```
+
+The model performed better than the multinomial logit model with train accuracy of 82.89% and test accuracy of 81.58%. To check how much each predictor variable contributes to the model’s performance, variable importance is plotted as shown in Figure 4. The conversion rates for home and away teams constitute more than 60% of the overall model performance, while XG scores, betting odds, and attack scores are other important factors predicting the match outcomes.
+
+```{r}
+# Create a data frame with variable names and importance values
+df <- data.frame(variable = names(rf_model$variable.importance),
+                 importance = rf_model$variable.importance)
+
+# Calculate variable importance percentages
+rf_model_var_imp_df <- df %>%
+  mutate(imp_percentage = importance / sum(importance))
+
+# Full varimp plot with percentage values
+var_imp <- ggplot(rf_model_var_imp_df, aes(x = reorder(variable, imp_percentage), y = imp_percentage)) +
+  geom_col(fill = "darkblue", alpha = 0.68) +
+  ylab("Importance (Percent)") +
+  xlab("Variable Name") +
+  ggtitle("Variable Importance Plot") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_classic()
+ggsave("variable_importance.png", var_imp, width = 8, height = 6, dpi = 300)
+var_imp 
+```
+
+Baio, G., & Blangiardo, M. (2010). Bayesian hierarchical model for the prediction of football results. Journal of Applied Statistics, 37(2), 253-264.
+Ranjan, A., Kumar, V., Malhotra, D., Jain, R., & Nagrath, P. (2021). Predicting the Result of English Premier League Matches. In Proceedings of Second International Conference on Computing, Communications, and Cyber-Security: IC4S 2020 (pp. 435-446). Springer Singapore.
+The Punters Page. (2023). Poisson Distribution in Sports Betting – A Step by Step Guide. Retrieved from https://www.thepunterspage.com/poisson-distribution-betting/
+
+
+
